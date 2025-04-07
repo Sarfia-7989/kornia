@@ -4,6 +4,8 @@ SmolVLM Benchmarking Tool
 
 This script benchmarks different backends (Python simulation, Rust Candle, Rust ONNX)
 and measures performance across different model sizes and tasks.
+
+Can be run directly or as part of a workflow in the Replit environment.
 """
 
 import argparse
@@ -17,6 +19,12 @@ from PIL import Image
 
 # Check if running in CI environment
 IN_CI = os.environ.get("CI") == "true"
+
+# Default to current directory if run from workflow
+if os.getcwd().endswith('kornia-rs'):
+    DEFAULT_IMAGE_PATH = "../test_image.jpg"
+else:
+    DEFAULT_IMAGE_PATH = "test_image.jpg"
 
 # Available model sizes
 MODEL_SIZES = ["small", "medium", "large"]
@@ -63,18 +71,40 @@ def get_system_info():
                         cpu_model = line.split(":")[1].strip()
                         break
             system_info["cpu_model"] = cpu_model
-        except:
-            system_info["cpu_model"] = "Could not determine"
+        except (IOError, OSError, FileNotFoundError) as e:
+            system_info["cpu_model"] = f"Could not determine: {str(e)}"
             
     # Try to get memory info
     try:
-        import psutil
-        mem = psutil.virtual_memory()
-        system_info["memory_total"] = str(mem.total)
-        system_info["memory_available"] = str(mem.available)
-    except:
-        system_info["memory_total"] = "Unknown"
-        system_info["memory_available"] = "Unknown"
+        # Try using psutil if available
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            system_info["memory_total"] = str(mem.total)
+            system_info["memory_available"] = str(mem.available)
+        except ImportError:
+            # Fallback to /proc/meminfo on Linux
+            if platform.system() == "Linux":
+                mem_total = "Unknown"
+                mem_available = "Unknown"
+                try:
+                    with open("/proc/meminfo", "r") as f:
+                        for line in f:
+                            if "MemTotal" in line:
+                                mem_total = line.split(":")[1].strip()
+                            elif "MemAvailable" in line:
+                                mem_available = line.split(":")[1].strip()
+                    system_info["memory_total"] = mem_total
+                    system_info["memory_available"] = mem_available
+                except (IOError, OSError, FileNotFoundError) as e:
+                    system_info["memory_total"] = f"Unknown: {str(e)}"
+                    system_info["memory_available"] = f"Unknown: {str(e)}"
+            else:
+                system_info["memory_total"] = "Unknown (psutil not available)"
+                system_info["memory_available"] = "Unknown (psutil not available)"
+    except Exception as e:
+        system_info["memory_total"] = f"Unknown: {str(e)}"
+        system_info["memory_available"] = f"Unknown: {str(e)}"
         
     return system_info
 
@@ -289,7 +319,7 @@ def run_benchmark(backend, image_path, prompt, model_size="small", use_hf=False)
 
 def main():
     parser = argparse.ArgumentParser(description="SmolVLM Benchmarking Tool")
-    parser.add_argument("-i", "--image", required=True, help="Path to the test image")
+    parser.add_argument("-i", "--image", default=DEFAULT_IMAGE_PATH, help="Path to the test image")
     parser.add_argument("-b", "--backends", nargs="+", choices=BACKENDS, default=["python"], 
                        help="Backends to benchmark")
     parser.add_argument("-s", "--sizes", nargs="+", choices=MODEL_SIZES, default=["small"], 

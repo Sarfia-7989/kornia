@@ -4,6 +4,8 @@ SmolVLM Demo - Enhanced Image Analysis Simulation
 
 This script demonstrates functionality of SmolVLM with both simulated image analysis
 and integration with Hugging Face API (when available) for real model inference.
+
+Can be run directly or as part of a workflow in the Replit environment.
 """
 
 import argparse
@@ -15,8 +17,11 @@ import base64
 import io
 import platform
 from datetime import datetime
+# Make numpy optional for environments where it might not be available
+numpy_available = False
 try:
     import numpy as np
+    numpy_available = True
 except ImportError:
     # NumPy is optional for basic functionality
     np = None
@@ -32,6 +37,12 @@ if USE_HUGGING_FACE and HF_TOKEN is not None:
     print(f"Hugging Face token is available (length: {len(HF_TOKEN)})")
 else:
     print("No Hugging Face token found in environment")
+
+# Default to current directory if run from workflow
+if os.getcwd().endswith('kornia-rs'):
+    DEFAULT_IMAGE_PATH = "../test_image.jpg"
+else:
+    DEFAULT_IMAGE_PATH = "test_image.jpg"
 
 # Check if running in CI environment
 IN_CI = os.environ.get("CI") == "true"
@@ -400,8 +411,17 @@ def process_image(image_path):
             ratio = max_dim / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
             print(f"Resizing image to {new_size}")
-            # Use BICUBIC instead of LANCZOS as it's more widely supported across PIL versions
-            image = image.resize(new_size, Image.BICUBIC)
+            try:
+                # Try LANCZOS first (for newer PIL versions)
+                try:
+                    image = image.resize(new_size, Image.LANCZOS)
+                except AttributeError:
+                    # Fall back to BICUBIC for older PIL versions (Python 3.8 compatibility)
+                    image = image.resize(new_size, Image.BICUBIC)
+            except Exception as resize_error:
+                # If any other issue, just use BICUBIC
+                print(f"Warning: Using fallback resize method due to error: {resize_error}")
+                image = image.resize(new_size, Image.BICUBIC)
         
         return image
     except Exception as e:
@@ -410,8 +430,8 @@ def process_image(image_path):
 
 def main():
     parser = argparse.ArgumentParser(description="SmolVLM Image Analysis Demo")
-    parser.add_argument("-i", "--image", required=True, help="Path to the input image")
-    parser.add_argument("-p", "--prompt", required=True, help="Text prompt for the image analysis")
+    parser.add_argument("-i", "--image", default=DEFAULT_IMAGE_PATH, help="Path to the input image")
+    parser.add_argument("-p", "--prompt", default="What objects are in this image?", help="Text prompt for the image analysis")
     parser.add_argument("-s", "--size", choices=["small", "medium", "large"], default="small", help="Model size to use")
     parser.add_argument("--use-hf", action="store_true", help="Use Hugging Face API if available")
     parser.add_argument("-o", "--output", help="Save result to output file")

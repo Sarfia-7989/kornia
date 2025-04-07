@@ -1,76 +1,33 @@
-# SmolVLM for Kornia-rs
+# SmolVLM Implementation for Kornia-rs
 
-This is a Rust implementation of SmolVLM (Small Vision Language Models) for the Kornia library. SmolVLM provides lightweight and efficient vision-language capabilities, particularly suitable for embedded systems and resource-constrained environments.
-
-## Overview
-
-SmolVLM integrates vision-language capabilities into Kornia, allowing for tasks such as:
-- Image captioning
-- Visual question answering
-- Scene understanding
-- Object detection description
-
-The implementation supports multiple backends and model sizes:
-
-**Backends:**
-- Candle: Native Rust machine learning framework for efficient on-device inference
-- ONNX Runtime: Cross-platform inferencing with ORT-Pyke integration
-
-**Model Sizes:**
-- Small (~300MB): For resource-constrained environments
-- Medium (~500MB): Balanced between size and capability
-- Large (~1GB): For best performance when resources allow
+This repository contains the SmolVLM (Small Visual Language Model) implementation for the Kornia-rs project, a computer vision library in Rust. SmolVLM enables efficient vision-language capabilities within Kornia, supporting multiple backends and model sizes.
 
 ## Features
 
-- 🚀 **Multiple backend support**: Choose between Candle (pure Rust) or ONNX Runtime
-- 📏 **Size options**: Three model sizes to fit different resource constraints
-- 📊 **Comprehensive benchmarking**: Tools to evaluate performance across backends and configurations
-- 🔧 **Easy integration**: Simple API for kornia-rs applications
-- 🧪 **Test utilities**: Example applications and testing framework
-- 🔄 **Platform compatibility**: Works on desktop and NVIDIA Jetson platforms
+- **Multiple Backends**: Supports both Candle and ONNX backends for neural network inference
+- **Flexible Model Sizes**: Compatible with small, medium, and large model variants
+- **Cross-Platform**: Works on both x86_64 and aarch64 architectures
+- **Comprehensive API**: Simple Rust API for easy integration
+- **Python Interoperability**: Python bindings and demo scripts included
+
+## Requirements
+
+- Rust 1.76+
+- Python 3.8+ (for Python scripts)
+- Python dependencies: PIL (Pillow), requests, numpy (optional)
 
 ## Installation
 
-### Prerequisites
-
-- Rust 1.76 or newer
-- For ONNX backend: ONNX Runtime libraries
-- For Candle backend: No additional dependencies
-
-### Building
-
-To build with both backends:
+Clone the repository and build the project:
 
 ```bash
-cargo build --features="kornia-models/candle kornia-models/onnx"
-```
-
-For only Candle backend:
-
-```bash
-cargo build --features="kornia-models/candle"
-```
-
-For only ONNX backend:
-
-```bash
-cargo build --features="kornia-models/onnx"
-```
-
-### Downloading Models
-
-Use the provided script to download model weights:
-
-```bash
-# Download all models for all backends
-./download_models.sh
-
-# Download only small model for Candle backend
-./download_models.sh --small --candle
-
-# Download only medium model for ONNX backend
-./download_models.sh --medium --onnx
+git clone https://github.com/kornia/kornia-rs.git
+cd kornia-rs
+cargo build --features="kornia-models/candle"  # For Candle backend
+# or
+cargo build --features="kornia-models/onnx"    # For ONNX backend
+# or
+cargo build --features="kornia-models/candle kornia-models/onnx"  # For both backends
 ```
 
 ## Usage
@@ -78,121 +35,102 @@ Use the provided script to download model weights:
 ### Rust API
 
 ```rust
-use kornia_models::smolvlm::common::{ModelSize, SmolVLMConfig};
-use kornia_models::smolvlm::processor::ImageProcessor;
-use kornia_models::smolvlm::candle::CandleBackend;
+use kornia_models::smolvlm::{SmolVLM, ModelSize, Backend};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Configure SmolVLM
-    let config = SmolVLMConfig::new(ModelSize::Small);
+    // Create a SmolVLM instance with Candle backend
+    let model = SmolVLM::new(ModelSize::Small, Backend::Candle)?;
     
-    // Initialize image processor
-    let processor = ImageProcessor::new(&config)?;
+    // Load an image
+    let image = image::open("path/to/image.jpg")?;
     
-    // Process an image
-    let image = processor.process_image_from_path("path/to/image.jpg")?;
+    // Analyze the image with a prompt
+    let prompt = "What objects are in this image?";
+    let result = model.analyze(&image, prompt)?;
     
-    // Initialize backend with model path
-    let mut backend = CandleBackend::new("models/candle/Small", &config)?;
-    
-    // Generate a caption
-    let caption = backend.generate_caption_for_image(&image, "What objects are in this image?")?;
-    
-    println!("Caption: {}", caption);
+    println!("Analysis result: {}", result);
     
     Ok(())
 }
 ```
 
-### Example Applications
-
-The repository includes several example applications:
-
-#### Basic SmolVLM Demo
+### Command-Line Demo
 
 ```bash
-cargo run --example smolvlm_demo --features="kornia-models/candle" -- --image test_image.jpg --prompt "What objects are in this image?"
+# Run the SmolVLM demo with Candle backend
+cargo run --release --example smolvlm_demo --features="kornia-models/candle" -- \
+    --image path/to/image.jpg \
+    --prompt "What objects are in this image?" \
+    --model-size small \
+    --backend candle
+
+# Run the SmolVLM demo with ONNX backend
+cargo run --release --example smolvlm_compare --features="kornia-models/onnx" -- \
+    --image path/to/image.jpg \
+    --prompt "What objects are in this image?" \
+    --model-size small \
+    --backend onnx
 ```
 
-#### Backend Comparison
+### Python Scripts
 
 ```bash
-cargo run --example smolvlm_compare --features="kornia-models/candle kornia-models/onnx" -- --image test_image.jpg --prompt "What objects are in this image?" --backends candle onnx
+# Run the Python demo 
+python smolvlm_demo.py -i path/to/image.jpg -p "What objects are in this image?" -s small
+
+# Run benchmark comparing backends and model sizes
+python benchmark.py -i path/to/image.jpg -b python candle onnx -s small medium -t objects scene
 ```
 
-#### Benchmarking Tool
+## Benchmarking
+
+The `benchmark.py` script allows comparing performance across different backends and model sizes:
 
 ```bash
-cargo run --example smolvlm_compare --features="kornia-models/candle kornia-models/onnx" -- --image test_image.jpg --prompt "What objects are in this image?" --backends candle onnx --benchmark --runs 5
+python benchmark.py -i path/to/image.jpg -b python candle onnx -s small medium -t objects scene -r 3 -o benchmark_results.json
 ```
 
-### Python Integration
+Options:
+- `-i/--image`: Path to test image
+- `-b/--backends`: Backends to benchmark (python, candle, onnx)
+- `-s/--sizes`: Model sizes to benchmark (small, medium, large)
+- `-t/--tasks`: Tasks to benchmark (description, objects, colors, scene, etc.)
+- `-r/--runs`: Number of benchmark runs for each configuration
+- `-o/--output`: Output file for benchmark results (JSON)
+- `--use-hf`: Use Hugging Face API for Python backend if token is available
 
-The repository also includes Python scripts for demonstration and benchmarking:
+## CI/CD Integration
 
-#### Demo
+This repository includes CI workflows for automated testing and validation. The workflows test:
 
-```bash
-cd kornia-rs
-python smolvlm_demo.py -i test_image.jpg -p "What objects are in this image?"
-```
+1. Cross-platform compatibility (x86_64 and aarch64)
+2. Python compatibility (3.8-3.13)
+3. Formatting and linting (rustfmt)
+4. Feature combinations (Candle, ONNX, both)
 
-With Hugging Face API integration:
+### CI Environment Notes
 
-```bash
-export HF_TOKEN="your_hugging_face_token"
-cd kornia-rs
-python smolvlm_demo.py -i test_image.jpg -p "What objects are in this image?" --use-hf
-```
+- CI environments use reduced timeouts and smaller image sizes
+- Some tests are skipped in CI environments to avoid timeouts
+- Platform detection is handled automatically
 
-#### Benchmarking
+## Model Details
 
-```bash
-cd kornia-rs
-python benchmark.py -i test_image.jpg -b python candle onnx -s small medium -t objects scene -r 3
-```
+SmolVLM supports multiple model sizes:
 
-## Benchmarking and Evaluation
+- **Small**: Fastest, lowest memory usage
+- **Medium**: Balanced performance and accuracy
+- **Large**: Highest accuracy, slower inference
 
-### Performance Comparison
+## Contribution Guidelines
 
-The implementation includes tools to benchmark and compare the performance of different backends and model sizes. Here are some key metrics to look for:
+When contributing to this project, please ensure:
 
-1. **Inference Time**: How long it takes to process an image and generate a response
-2. **Memory Usage**: Peak memory consumption during inference
-3. **Model Loading Time**: Time required to load the model into memory
-4. **Accuracy**: Quality of generated captions or answers
-
-### NVIDIA Jetson Compatibility
-
-The implementation is designed to work well on NVIDIA Jetson platforms. When running on Jetson:
-
-1. Ensure CUDA libraries are properly installed
-2. For optimal performance with ONNX, TensorRT acceleration is recommended
-3. For Candle backend, ensure CUDA support is enabled during build
-
-## Architecture
-
-The SmolVLM implementation consists of several key components:
-
-1. **Common Interfaces**: Provides model configuration, error handling, and shared types
-2. **Image Processor**: Handles image loading, preprocessing, and normalization
-3. **Tokenizer**: Manages text tokenization for prompts and outputs
-4. **Backend Implementations**:
-   - Candle: Pure Rust implementation
-   - ONNX: Integration with ONNX Runtime
-5. **Benchmarking Tools**: Utilities for performance testing and comparison
-
-## Contributing
-
-Contributions to improve SmolVLM in kornia-rs are welcome! Areas for improvement include:
-
-- Performance optimizations
-- Additional backend implementations
-- Enhanced model capabilities
-- Better integration with other Kornia components
-- Expanded testing on different platforms
+1. All code passes rustfmt checks
+2. Python scripts are compatible with Python 3.8+
+3. CI workflow passes for all platforms
+4. Documentation is updated accordingly
 
 ## License
 
-This project is licensed under Apache License 2.0 - see the LICENSE file for details.
+Apache License 2.0

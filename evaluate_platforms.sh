@@ -1,284 +1,230 @@
 #!/bin/bash
-# SmolVLM Platform Evaluation Tool
-# Runs benchmarks on both desktop and NVIDIA Jetson platforms
+# Platform Evaluation Script for SmolVLM
 
 set -e
 
-# Configuration
-OUTPUT_DIR="benchmark_results"
-TEST_IMAGES="test_images"
-MODEL_DIR="models"
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-OUTPUT_FILE="${OUTPUT_DIR}/benchmark_${TIMESTAMP}.json"
-LOG_FILE="${OUTPUT_DIR}/benchmark_${TIMESTAMP}.log"
+# Print colored status messages
+print_status() {
+    echo -e "\033[1;34m[INFO]\033[0m $1"
+}
 
-# Create necessary directories
-mkdir -p "${OUTPUT_DIR}"
-mkdir -p "${TEST_IMAGES}"
+print_success() {
+    echo -e "\033[1;32m[SUCCESS]\033[0m $1"
+}
 
-# Check for test image
-if [ ! -f "test_image.jpg" ]; then
-    echo "Error: test_image.jpg not found. Please add a test image to the project root."
-    exit 1
+print_error() {
+    echo -e "\033[1;31m[ERROR]\033[0m $1"
+}
+
+print_warning() {
+    echo -e "\033[1;33m[WARNING]\033[0m $1"
+}
+
+print_header() {
+    echo -e "\033[1;35m==================================================\033[0m"
+    echo -e "\033[1;35m $1 \033[0m"
+    echo -e "\033[1;35m==================================================\033[0m"
+}
+
+# Create results directory
+RESULTS_DIR="./evaluation_results"
+mkdir -p "$RESULTS_DIR"
+
+# Check if test image exists
+DEFAULT_TEST_IMAGE="./test_image.jpg"
+if [ ! -f "$DEFAULT_TEST_IMAGE" ]; then
+    print_warning "Default test image not found: $DEFAULT_TEST_IMAGE"
+    print_status "You'll need to specify a test image path."
 fi
 
-# Copy test image to test images directory
-cp test_image.jpg "${TEST_IMAGES}/"
-
-# Detect platform
-detect_platform() {
-    if [ -f "/etc/nv_tegra_release" ]; then
-        echo "nvidia_jetson"
-    elif [ -f "/proc/device-tree/model" ] && grep -q "Raspberry Pi" /proc/device-tree/model; then
-        echo "raspberry_pi"
+# Check system information
+check_system() {
+    print_header "System Information"
+    
+    # OS info
+    print_status "Operating System:"
+    if [ -f /etc/os-release ]; then
+        cat /etc/os-release | grep -E "^(NAME|VERSION)="
     else
-        echo "desktop"
+        uname -a
+    fi
+    
+    # CPU info
+    print_status "CPU Information:"
+    if [ -f /proc/cpuinfo ]; then
+        echo "CPU Model: $(grep "model name" /proc/cpuinfo | head -n 1 | cut -d ":" -f 2 | xargs)"
+        echo "CPU Cores: $(grep -c "processor" /proc/cpuinfo)"
+    else
+        sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "CPU info not available"
+    fi
+    
+    # Memory info
+    print_status "Memory Information:"
+    if [ -f /proc/meminfo ]; then
+        grep -E "MemTotal|MemFree|MemAvailable" /proc/meminfo
+    else
+        vm_stat 2>/dev/null || echo "Memory info not available"
+    fi
+    
+    # GPU info if nvidia-smi is available
+    if command -v nvidia-smi &> /dev/null; then
+        print_status "GPU Information:"
+        nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
     fi
 }
 
-PLATFORM=$(detect_platform)
-echo "Detected platform: ${PLATFORM}"
-
-# Get system information
-get_system_info() {
-    echo "===== System Information ====="
-    echo "Platform: ${PLATFORM}"
-    echo "Date: $(date)"
-    echo "Kernel: $(uname -r)"
-    echo "Architecture: $(uname -m)"
+# Run Python benchmark for specified backends
+run_python_benchmark() {
+    local test_image=$1
+    local tasks=$2
+    local sizes=$3
+    local backends=${4:-"python"}
+    local runs=${5:-1}
+    local output_file="$RESULTS_DIR/python_benchmark_$(date +%Y%m%d_%H%M%S).json"
     
-    # CPU information
-    echo "CPU Information:"
-    if [ -f "/proc/cpuinfo" ]; then
-        CPU_MODEL=$(grep "model name" /proc/cpuinfo | head -n 1 | cut -d ":" -f 2 | sed 's/^[ \t]*//')
-        CPU_CORES=$(grep -c "processor" /proc/cpuinfo)
-        echo "  Model: ${CPU_MODEL}"
-        echo "  Cores: ${CPU_CORES}"
+    print_header "Running Python Benchmarks"
+    print_status "Test image: $test_image"
+    print_status "Tasks: $tasks"
+    print_status "Model sizes: $sizes"
+    print_status "Backends: $backends"
+    print_status "Runs per config: $runs"
+    
+    # Run the benchmark
+    python3 benchmark.py \
+        -i "$test_image" \
+        -t $tasks \
+        -s $sizes \
+        -b $backends \
+        -r $runs \
+        -o "$output_file"
+    
+    if [ $? -eq 0 ]; then
+        print_success "Benchmark completed successfully!"
+        print_success "Results saved to: $output_file"
     else
-        echo "  CPU info not available"
-    fi
-    
-    # Memory information
-    echo "Memory Information:"
-    if [ -f "/proc/meminfo" ]; then
-        MEM_TOTAL=$(grep "MemTotal" /proc/meminfo | awk '{print $2 / 1024 / 1024}')
-        echo "  Total Memory: ${MEM_TOTAL} GB"
-    else
-        echo "  Memory info not available"
-    fi
-    
-    # GPU information for NVIDIA platforms
-    if [ "${PLATFORM}" = "nvidia_jetson" ]; then
-        echo "GPU Information:"
-        if command -v nvidia-smi &> /dev/null; then
-            nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-        else
-            echo "  NVIDIA GPU detected but nvidia-smi not available"
-        fi
-    fi
-    
-    # Rust and Cargo version
-    echo "Rust Information:"
-    if command -v rustc &> /dev/null; then
-        echo "  Rust: $(rustc --version)"
-    else
-        echo "  Rust not found"
-    fi
-    
-    if command -v cargo &> /dev/null; then
-        echo "  Cargo: $(cargo --version)"
-    else
-        echo "  Cargo not found"
-    fi
-    
-    # Python version
-    echo "Python Information:"
-    if command -v python3 &> /dev/null; then
-        echo "  Python: $(python3 --version)"
-    else
-        echo "  Python not found"
+        print_error "Benchmark failed."
     fi
 }
 
-# Run a benchmark and measure time
-run_benchmark() {
-    local name=$1
-    local cmd=$2
+# Run Rust binary benchmark
+run_rust_benchmark() {
+    local test_image=$1
+    local prompt=$2
+    local model_size=${3:-"small"}
+    local backend=${4:-"candle"}
     
-    echo "===== Running Benchmark: ${name} ====="
-    echo "${cmd}"
+    print_header "Running Rust Benchmark ($backend backend)"
+    print_status "Test image: $test_image"
+    print_status "Prompt: $prompt"
+    print_status "Model size: $model_size"
     
-    # Measure time
-    start_time=$(date +%s.%N)
-    eval "${cmd}"
-    end_time=$(date +%s.%N)
-    
-    # Calculate elapsed time
-    elapsed=$(echo "${end_time} - ${start_time}" | bc)
-    echo "Elapsed time: ${elapsed} seconds"
-    echo "===== Benchmark Complete: ${name} ====="
-    echo ""
-    
-    # Return elapsed time
-    echo "${elapsed}"
-}
-
-# Run Python benchmarks
-run_python_benchmarks() {
-    echo "===== Running Python Benchmarks ====="
-    
-    # Run standard benchmarks
-    python3 benchmark.py -i test_image.jpg -b python -s small medium -t objects description -r 3 -o "${OUTPUT_DIR}/python_standard.json"
-    
-    # Run with Hugging Face API if token is available
-    if [ -n "${HF_TOKEN}" ]; then
-        python3 benchmark.py -i test_image.jpg -b python -s small medium -t objects description -r 3 --use-hf -o "${OUTPUT_DIR}/python_hf.json"
-    else
-        echo "Skipping Hugging Face API benchmarks (HF_TOKEN not set)"
-    fi
-}
-
-# Run Rust benchmarks
-run_rust_benchmarks() {
-    echo "===== Running Rust Benchmarks ====="
-    
-    # Ensure we're building in release mode
-    CARGO_FLAGS="--release"
-    
-    # Add platform-specific flags
-    if [ "${PLATFORM}" = "nvidia_jetson" ]; then
-        # For Jetson, we want to enable CUDA support if available
-        if command -v nvcc &> /dev/null; then
-            echo "CUDA detected, enabling CUDA support for Candle"
-            CARGO_FLAGS="${CARGO_FLAGS} --features=kornia-models/candle-cuda kornia-models/onnx"
-        else
-            CARGO_FLAGS="${CARGO_FLAGS} --features=kornia-models/candle kornia-models/onnx"
-        fi
-    else
-        # Standard desktop build
-        CARGO_FLAGS="${CARGO_FLAGS} --features=kornia-models/candle kornia-models/onnx"
+    # Verify the binary exists or build it
+    local binary_path="./target/release/examples/smolvlm_demo"
+    if [ ! -f "$binary_path" ]; then
+        print_status "Building Rust binary with $backend backend..."
+        cargo build --release --example smolvlm_demo --features="kornia-models/$backend"
     fi
     
-    # Build the comparison example
-    echo "Building Rust SmolVLM with flags: ${CARGO_FLAGS}"
-    cargo build --example smolvlm_compare ${CARGO_FLAGS}
-    
-    # Run benchmarks for each backend and model size
-    for backend in candle onnx; do
-        for size in small medium; do
-            # Skip if model directory doesn't exist
-            if [ ! -d "${MODEL_DIR}/${backend}/${size^}" ]; then
-                echo "Skipping ${backend}/${size} (model directory not found)"
-                continue
-            fi
-            
-            # Run the benchmark
-            MODEL_PATH="${MODEL_DIR}/${backend}/${size^}"
-            OUTPUT_JSON="${OUTPUT_DIR}/rust_${backend}_${size}.json"
-            
-            echo "Running benchmark: ${backend} backend, ${size} model"
-            cargo run --example smolvlm_compare ${CARGO_FLAGS} -- \
-                --image test_image.jpg \
-                --prompt "What objects are in this image?" \
-                --model-path "${MODEL_PATH}" \
-                --model-size "${size}" \
-                --backend "${backend}" \
-                --benchmark \
-                --runs 3 \
-                --warmup 1 \
-                --output "${OUTPUT_JSON}"
-        done
-    done
+    # Run the benchmark
+    print_status "Running benchmark..."
+    time "$binary_path" \
+        --image "$test_image" \
+        --prompt "$prompt" \
+        --model-size "$model_size" \
+        --backend "$backend"
 }
 
-# Generate a summary report
-generate_summary() {
-    echo "===== Generating Summary Report ====="
+# Run comprehensive evaluation
+run_evaluation() {
+    local test_image=$1
+    local output_dir="$RESULTS_DIR/evaluation_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$output_dir"
     
-    # Collect all JSON files
-    JSON_FILES=$(find "${OUTPUT_DIR}" -name "*.json")
+    print_header "SmolVLM Platform Evaluation"
+    print_status "Test image: $test_image"
+    print_status "Output directory: $output_dir"
     
-    # Create summary file
-    SUMMARY_FILE="${OUTPUT_DIR}/summary_${TIMESTAMP}.txt"
+    # Check if we have Hugging Face token
+    if [ -n "$HF_TOKEN" ]; then
+        print_status "Hugging Face token detected"
+        HF_AVAILABLE=true
+    else
+        print_warning "No Hugging Face token found. Some tests will be limited."
+        HF_AVAILABLE=false
+    fi
     
-    {
-        echo "SmolVLM Benchmark Summary"
-        echo "=========================="
-        echo "Platform: ${PLATFORM}"
-        echo "Date: $(date)"
-        echo ""
-        
-        # Include system information
-        get_system_info
-        
-        echo ""
-        echo "Benchmark Results"
-        echo "================="
-        
-        # Process each JSON file and extract key metrics
-        for json_file in ${JSON_FILES}; do
-            backend=$(basename "${json_file}" .json | cut -d "_" -f 2)
-            model_size=$(basename "${json_file}" .json | cut -d "_" -f 3)
-            
-            echo "Backend: ${backend}, Model Size: ${model_size}"
-            
-            # Extract metrics if jq is available
-            if command -v jq &> /dev/null; then
-                if [ -f "${json_file}" ]; then
-                    # This is a simplified example - adjust based on your actual JSON structure
-                    avg_time=$(jq '.results[0].avg_duration // "N/A"' "${json_file}" 2>/dev/null || echo "N/A")
-                    success_rate=$(jq '.results[0].success_rate // "N/A"' "${json_file}" 2>/dev/null || echo "N/A")
-                    
-                    echo "  Average Time: ${avg_time} seconds"
-                    echo "  Success Rate: ${success_rate}%"
-                else
-                    echo "  File not found or empty"
-                fi
-            else
-                echo "  (jq not available, can't parse JSON metrics)"
-            fi
-            
-            echo ""
-        done
-        
-        echo ""
-        echo "Conclusion"
-        echo "=========="
-        echo "For detailed results, see the individual JSON files in ${OUTPUT_DIR}"
-    } > "${SUMMARY_FILE}"
+    # Save system information
+    check_system | tee "$output_dir/system_info.txt"
     
-    echo "Summary saved to: ${SUMMARY_FILE}"
+    # Run sequential tests
+    print_header "Running Evaluation Tests"
     
-    # Display the summary
-    cat "${SUMMARY_FILE}"
+    # 1. Basic Python simulation test
+    print_status "1/5 Running basic Python simulation..."
+    python3 smolvlm_demo.py -i "$test_image" -p "What objects are in this image?" \
+        > "$output_dir/python_basic.txt" 2>&1
+    
+    # 2. Python benchmark for multiple tasks and sizes
+    print_status "2/5 Running Python benchmarks..."
+    python3 benchmark.py -i "$test_image" -b python -s small medium -t objects scene description \
+        -r 1 -o "$output_dir/python_benchmark.json" > "$output_dir/python_benchmark.txt" 2>&1
+    
+    # 3. Rust Candle test if available
+    print_status "3/5 Testing Rust Candle backend..."
+    if cargo build --release --example smolvlm_demo --features="kornia-models/candle" 2>/dev/null; then
+        ./target/release/examples/smolvlm_demo \
+            --image "$test_image" \
+            --prompt "What objects are in this image?" \
+            --model-size small \
+            --backend candle > "$output_dir/rust_candle.txt" 2>&1 || \
+        print_warning "Candle backend test failed, see logs for details"
+    else
+        print_warning "Failed to build Candle backend, skipping test"
+    fi
+    
+    # 4. Rust ONNX test if available
+    print_status "4/5 Testing Rust ONNX backend..."
+    if cargo build --release --example smolvlm_demo --features="kornia-models/onnx" 2>/dev/null; then
+        ./target/release/examples/smolvlm_demo \
+            --image "$test_image" \
+            --prompt "What objects are in this image?" \
+            --model-size small \
+            --backend onnx > "$output_dir/rust_onnx.txt" 2>&1 || \
+        print_warning "ONNX backend test failed, see logs for details"
+    else
+        print_warning "Failed to build ONNX backend, skipping test"
+    fi
+    
+    # 5. Hugging Face API test if token available
+    print_status "5/5 Testing Hugging Face API integration..."
+    if [ "$HF_AVAILABLE" = true ]; then
+        python3 smolvlm_demo.py -i "$test_image" -p "What objects are in this image?" --use-hf \
+            > "$output_dir/hf_api.txt" 2>&1
+    else
+        print_warning "Skipping Hugging Face API test (no token available)"
+    fi
+    
+    print_header "Evaluation Complete"
+    print_success "All tests completed. Results saved to: $output_dir"
+    print_status "To compare results, check the output files in this directory."
 }
 
 # Main function
 main() {
-    # Start logging
-    exec > >(tee -a "${LOG_FILE}") 2>&1
+    local test_image=${1:-$DEFAULT_TEST_IMAGE}
     
-    echo "===== SmolVLM Platform Evaluation ====="
-    echo "Date: $(date)"
-    echo "Platform: ${PLATFORM}"
-    echo "Output directory: ${OUTPUT_DIR}"
-    echo "Log file: ${LOG_FILE}"
-    echo ""
+    # If no image specified and default doesn't exist, show error
+    if [ -z "$test_image" ] || [ ! -f "$test_image" ]; then
+        print_error "Test image not found. Please specify a valid image path."
+        echo "Usage: $0 [test_image_path]"
+        exit 1
+    fi
     
-    # Get system information
-    get_system_info
-    
-    # Run benchmarks
-    run_python_benchmarks
-    run_rust_benchmarks
-    
-    # Generate summary
-    generate_summary
-    
-    echo ""
-    echo "===== Evaluation Complete ====="
-    echo "Results saved to: ${OUTPUT_DIR}"
+    # Run the evaluation
+    run_evaluation "$test_image"
 }
 
-# Run the main function
-main "$@"
+# Check if executed directly (not sourced)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

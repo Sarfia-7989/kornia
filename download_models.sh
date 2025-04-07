@@ -1,165 +1,203 @@
 #!/bin/bash
-# SmolVLM Model Downloader
-# Downloads model weights for both Candle and ONNX backends
+# Model Downloader Script for SmolVLM
 
 set -e
 
-# Configuration
-MODEL_BASE_DIR="models"
-HF_REPO_SMALL="Kornia/SmolVLM-Small"
-HF_REPO_MEDIUM="Kornia/SmolVLM-Medium"
-HF_REPO_LARGE="Kornia/SmolVLM-Large"
+# Create models directory if it doesn't exist
+MODELS_DIR="./models/smolvlm"
+mkdir -p "$MODELS_DIR"
 
-# Parse command line arguments
-DOWNLOAD_SMALL=false
-DOWNLOAD_MEDIUM=false
-DOWNLOAD_LARGE=false
-DOWNLOAD_CANDLE=false
-DOWNLOAD_ONNX=false
-
-# If no specific arguments, download all
-if [ $# -eq 0 ]; then
-  DOWNLOAD_SMALL=true
-  DOWNLOAD_MEDIUM=true
-  DOWNLOAD_LARGE=true
-  DOWNLOAD_CANDLE=true
-  DOWNLOAD_ONNX=true
-fi
-
-# Parse arguments
-for arg in "$@"; do
-  case $arg in
-    --small)
-      DOWNLOAD_SMALL=true
-      ;;
-    --medium)
-      DOWNLOAD_MEDIUM=true
-      ;;
-    --large)
-      DOWNLOAD_LARGE=true
-      ;;
-    --candle)
-      DOWNLOAD_CANDLE=true
-      ;;
-    --onnx)
-      DOWNLOAD_ONNX=true
-      ;;
-    --help)
-      echo "SmolVLM Model Downloader"
-      echo ""
-      echo "Usage: ./download_models.sh [OPTIONS]"
-      echo ""
-      echo "Options:"
-      echo "  --small     Download small model weights"
-      echo "  --medium    Download medium model weights"
-      echo "  --large     Download large model weights"
-      echo "  --candle    Download Candle backend weights"
-      echo "  --onnx      Download ONNX backend weights"
-      echo "  --help      Show this help message"
-      echo ""
-      echo "If no options are specified, all models and backends will be downloaded."
-      exit 0
-      ;;
-    *)
-      echo "Unknown option: $arg"
-      echo "Use --help to see available options."
-      exit 1
-      ;;
-  esac
-done
-
-# Create model directories
-mkdir -p "${MODEL_BASE_DIR}/candle"
-mkdir -p "${MODEL_BASE_DIR}/onnx"
-
-# Check if huggingface-cli is available
-if ! command -v huggingface-cli &> /dev/null; then
-    echo "huggingface-cli is not installed. Please install it using:"
-    echo "pip install huggingface_hub"
-    echo ""
-    echo "Alternatively, you can manually download the models from:"
-    echo "https://huggingface.co/${HF_REPO_SMALL}"
-    echo "https://huggingface.co/${HF_REPO_MEDIUM}"
-    echo "https://huggingface.co/${HF_REPO_LARGE}"
-    exit 1
-fi
-
-# Check for Hugging Face token
-if [ -z "${HF_TOKEN}" ]; then
-    echo "Warning: HF_TOKEN environment variable not set."
-    echo "You may encounter rate limits or be unable to access private models."
-    echo "Set the HF_TOKEN environment variable with your Hugging Face API token."
-    echo ""
-    HUGGINGFACE_AUTH=""
-else
-    HUGGINGFACE_AUTH="--token ${HF_TOKEN}"
-    echo "Using Hugging Face token for authentication."
-fi
-
-# Function to download a specific model for a specific backend
-download_model() {
-    local size=$1
-    local backend=$2
-    local repo_name=$3
-    local target_dir="${MODEL_BASE_DIR}/${backend}/${size}"
-    
-    echo "===== Downloading ${size} model for ${backend} backend ====="
-    
-    # Create target directory
-    mkdir -p "${target_dir}"
-    
-    # Determine files to download based on backend
-    if [ "${backend}" = "candle" ]; then
-        # For Candle, download SafeTensors or GGML files
-        echo "Downloading Candle model files from ${repo_name}..."
-        huggingface-cli download ${HUGGINGFACE_AUTH} ${repo_name} \
-            --local-dir "${target_dir}" \
-            --include "*.safetensors" "*.ggml" "tokenizer.json" "config.json" \
-            --quiet
-    elif [ "${backend}" = "onnx" ]; then
-        # For ONNX, download ONNX files
-        echo "Downloading ONNX model files from ${repo_name}..."
-        huggingface-cli download ${HUGGINGFACE_AUTH} ${repo_name} \
-            --local-dir "${target_dir}" \
-            --include "*.onnx" "tokenizer.json" "config.json" \
-            --quiet
-    fi
-    
-    echo "Download complete: ${target_dir}"
-    echo ""
+# Print colored status messages
+print_status() {
+    echo -e "\033[1;34m[INFO]\033[0m $1"
 }
 
-# Download models based on command line arguments
-if [ "${DOWNLOAD_SMALL}" = true ]; then
-    if [ "${DOWNLOAD_CANDLE}" = true ]; then
-        download_model "Small" "candle" "${HF_REPO_SMALL}"
-    fi
-    if [ "${DOWNLOAD_ONNX}" = true ]; then
-        download_model "Small" "onnx" "${HF_REPO_SMALL}"
-    fi
-fi
+print_success() {
+    echo -e "\033[1;32m[SUCCESS]\033[0m $1"
+}
 
-if [ "${DOWNLOAD_MEDIUM}" = true ]; then
-    if [ "${DOWNLOAD_CANDLE}" = true ]; then
-        download_model "Medium" "candle" "${HF_REPO_MEDIUM}"
-    fi
-    if [ "${DOWNLOAD_ONNX}" = true ]; then
-        download_model "Medium" "onnx" "${HF_REPO_MEDIUM}"
-    fi
-fi
+print_error() {
+    echo -e "\033[1;31m[ERROR]\033[0m $1"
+}
 
-if [ "${DOWNLOAD_LARGE}" = true ]; then
-    if [ "${DOWNLOAD_CANDLE}" = true ]; then
-        download_model "Large" "candle" "${HF_REPO_LARGE}"
-    fi
-    if [ "${DOWNLOAD_ONNX}" = true ]; then
-        download_model "Large" "onnx" "${HF_REPO_LARGE}"
-    fi
-fi
+print_warning() {
+    echo -e "\033[1;33m[WARNING]\033[0m $1"
+}
 
-echo "===== All requested models have been downloaded ====="
-echo "Model directory: ${MODEL_BASE_DIR}"
-echo ""
-echo "To use these models, provide the path to the model directory:"
-echo "For Candle: ${MODEL_BASE_DIR}/candle/Small"
-echo "For ONNX: ${MODEL_BASE_DIR}/onnx/Small"
+# Check dependencies
+check_dependencies() {
+    print_status "Checking dependencies..."
+    
+    # Check for curl or wget
+    if command -v curl &> /dev/null; then
+        DOWNLOAD_CMD="curl -L -o"
+    elif command -v wget &> /dev/null; then
+        DOWNLOAD_CMD="wget -O"
+    else
+        print_error "Neither curl nor wget is installed. Please install one of them."
+        exit 1
+    fi
+    
+    # Check for md5sum or md5
+    if command -v md5sum &> /dev/null; then
+        MD5_CMD="md5sum"
+    elif command -v md5 &> /dev/null; then
+        MD5_CMD="md5 -q"
+    else
+        print_warning "Neither md5sum nor md5 is installed. Checksum verification will be skipped."
+        MD5_CMD="echo CHECKSUM_VERIFICATION_SKIPPED"
+    fi
+}
+
+# Download a model with progress and checksum verification
+download_model() {
+    local url=$1
+    local output_file=$2
+    local expected_checksum=$3
+    local size_desc=$4
+    
+    if [ -f "$output_file" ]; then
+        print_status "File already exists: $output_file, checking integrity..."
+        
+        # Verify checksum if possible
+        if [ -n "$expected_checksum" ] && [ "$MD5_CMD" != "echo CHECKSUM_VERIFICATION_SKIPPED" ]; then
+            local actual_checksum
+            if [ "$MD5_CMD" == "md5sum" ]; then
+                actual_checksum=$(md5sum "$output_file" | cut -d ' ' -f 1)
+            else
+                actual_checksum=$(md5 -q "$output_file")
+            fi
+            
+            if [ "$actual_checksum" == "$expected_checksum" ]; then
+                print_success "Checksum verified for $output_file"
+                return 0
+            else
+                print_warning "Checksum mismatch for $output_file. Re-downloading..."
+                rm "$output_file"
+            fi
+        else
+            print_warning "Skipping checksum verification for $output_file"
+            return 0
+        fi
+    fi
+    
+    print_status "Downloading $size_desc model from $url..."
+    
+    # Download the file
+    if [ "$DOWNLOAD_CMD" == "curl -L -o" ]; then
+        curl -L --progress-bar -o "$output_file" "$url"
+    else
+        wget --progress=bar:force -O "$output_file" "$url"
+    fi
+    
+    # Verify download succeeded
+    if [ $? -eq 0 ]; then
+        print_success "Downloaded $output_file successfully"
+        
+        # Verify checksum if possible
+        if [ -n "$expected_checksum" ] && [ "$MD5_CMD" != "echo CHECKSUM_VERIFICATION_SKIPPED" ]; then
+            local actual_checksum
+            if [ "$MD5_CMD" == "md5sum" ]; then
+                actual_checksum=$(md5sum "$output_file" | cut -d ' ' -f 1)
+            else
+                actual_checksum=$(md5 -q "$output_file")
+            fi
+            
+            if [ "$actual_checksum" == "$expected_checksum" ]; then
+                print_success "Checksum verified for $output_file"
+            else
+                print_error "Checksum mismatch for $output_file!"
+                print_error "Expected: $expected_checksum"
+                print_error "Got: $actual_checksum"
+                exit 1
+            fi
+        fi
+    else
+        print_error "Failed to download $output_file"
+        exit 1
+    fi
+}
+
+# Download platform-specific models
+download_platform_models() {
+    local platform=$1
+    
+    print_status "Downloading models for platform: $platform"
+    
+    # Create platform directory
+    local platform_dir="$MODELS_DIR/$platform"
+    mkdir -p "$platform_dir"
+    
+    # Download small model
+    download_model "https://huggingface.co/kornia/smolvlm-$platform/resolve/main/smolvlm-small.safetensors" \
+                  "$platform_dir/smolvlm-small.safetensors" \
+                  "" \
+                  "small"
+    
+    # Download medium model (only available for some platforms)
+    if [ "$platform" != "aarch64" ]; then
+        download_model "https://huggingface.co/kornia/smolvlm-$platform/resolve/main/smolvlm-medium.safetensors" \
+                      "$platform_dir/smolvlm-medium.safetensors" \
+                      "" \
+                      "medium"
+    else
+        print_warning "Medium model not available for $platform platform"
+    fi
+    
+    # Download tokenizer regardless of platform
+    download_model "https://huggingface.co/kornia/smolvlm-common/resolve/main/tokenizer.json" \
+                  "$MODELS_DIR/tokenizer.json" \
+                  "" \
+                  "tokenizer"
+}
+
+# Main function
+main() {
+    print_status "SmolVLM Model Downloader"
+    print_status "======================="
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Detect platform
+    PLATFORM=$(uname -m)
+    if [ "$PLATFORM" == "x86_64" ]; then
+        PLATFORM_DIR="x86_64"
+    elif [[ "$PLATFORM" == "arm64" || "$PLATFORM" == "aarch64" ]]; then
+        PLATFORM_DIR="aarch64"
+    else
+        print_warning "Unknown platform: $PLATFORM. Defaulting to x86_64."
+        PLATFORM_DIR="x86_64"
+    fi
+    
+    # Ask which platform to download for
+    echo "Available platforms:"
+    echo "1) x86_64 (Intel/AMD 64-bit)"
+    echo "2) aarch64 (ARM 64-bit, e.g., NVIDIA Jetson)"
+    echo "3) Both platforms"
+    echo "4) Current platform ($PLATFORM_DIR)"
+    read -p "Select platform(s) to download models for [4]: " platform_choice
+    
+    # Default to current platform
+    platform_choice=${platform_choice:-4}
+    
+    case $platform_choice in
+        1) download_platform_models "x86_64" ;;
+        2) download_platform_models "aarch64" ;;
+        3) 
+           download_platform_models "x86_64"
+           download_platform_models "aarch64"
+           ;;
+        4) download_platform_models "$PLATFORM_DIR" ;;
+        *) 
+           print_error "Invalid choice. Exiting."
+           exit 1
+           ;;
+    esac
+    
+    print_success "All models downloaded successfully!"
+    print_status "Models are located in: $MODELS_DIR"
+}
+
+# Run main function
+main "$@"
