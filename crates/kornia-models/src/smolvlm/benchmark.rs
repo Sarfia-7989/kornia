@@ -3,265 +3,283 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::common::{SmolVLMBackend, SmolVLMError, SmolVLMVariant};
-use super::{load_backend, SmolVLMModel};
+use crate::smolvlm::common::{ModelSize, SmolVLMConfig, SmolVLMError};
+#[cfg(feature = "candle")]
+use crate::smolvlm::candle::CandleBackend;
+#[cfg(feature = "onnx")]
+use crate::smolvlm::onnx::OnnxBackend;
+use crate::smolvlm::processor::ImageProcessor;
 
-/// Benchmark result for a single SmolVLM operation
+/// Benchmark configuration
 #[derive(Debug, Clone)]
-pub struct BenchmarkResult {
-    /// The backend used
-    pub backend: SmolVLMModel,
-    /// The model variant
-    pub variant: SmolVLMVariant,
-    /// Whether CPU was used (true) or GPU (false)
-    pub use_cpu: bool,
-    /// Time taken to load the model
-    pub load_time: Duration,
-    /// Time taken to process the image
-    pub process_time: Duration,
-    /// Time taken to generate text
-    pub generate_time: Duration,
-    /// The generated text
-    pub output: String,
+pub struct BenchmarkConfig {
+    /// Path to test image
+    pub image_path: String,
+    /// Prompt to use for benchmarking
+    pub prompt: String,
+    /// Model size to benchmark
+    pub model_size: ModelSize,
+    /// Number of warm-up runs
+    pub warmup_runs: usize,
+    /// Number of benchmark runs
+    pub benchmark_runs: usize,
+    /// Path to model directory
+    pub model_path: String,
 }
 
-impl BenchmarkResult {
-    /// Format the benchmark result as a string
-    pub fn to_string(&self) -> String {
-        format!(
-            "Backend: {:?}, Variant: {:?}, Device: {}\n\
-             Load time: {:?}\n\
-             Process time: {:?}\n\
-             Generate time: {:?}\n\
-             Total time: {:?}\n\
-             Output: {}",
-            self.backend,
-            self.variant,
-            if self.use_cpu { "CPU" } else { "GPU" },
-            self.load_time,
-            self.process_time,
-            self.generate_time,
-            self.load_time + self.process_time + self.generate_time,
-            self.output
-        )
+impl Default for BenchmarkConfig {
+    fn default() -> Self {
+        Self {
+            image_path: "test_image.jpg".to_string(),
+            prompt: "What objects are in this image?".to_string(),
+            model_size: ModelSize::Small,
+            warmup_runs: 1,
+            benchmark_runs: 3,
+            model_path: "models".to_string(),
+        }
     }
 }
 
-/// Run a comprehensive benchmark of SmolVLM models
-///
-/// # Arguments
-///
-/// * `backends` - List of backends to benchmark
-/// * `variants` - List of model variants to benchmark
-/// * `devices` - List of devices to benchmark (true for CPU, false for GPU)
-/// * `model_path` - Path to model directory
-/// * `image_path` - Path to test image
-/// * `prompt` - Text prompt for the model
-///
-/// # Returns
-///
-/// Vector of benchmark results
-pub fn run_benchmarks(
-    backends: &[SmolVLMModel],
-    variants: &[SmolVLMVariant],
-    devices: &[bool],
-    model_path: &Path,
-    image_path: &Path,
-    prompt: &str,
-) -> Vec<Result<BenchmarkResult, SmolVLMError>> {
+/// Benchmark result
+#[derive(Debug, Clone)]
+pub struct BenchmarkResult {
+    /// Engine name
+    pub engine: String,
+    /// Model size
+    pub model_size: ModelSize,
+    /// Average duration
+    pub avg_duration: Duration,
+    /// Min duration
+    pub min_duration: Duration,
+    /// Max duration
+    pub max_duration: Duration,
+    /// Standard deviation of durations
+    pub std_duration: Duration,
+    /// Success rate (0.0 to 1.0)
+    pub success_rate: f32,
+    /// Average output length
+    pub avg_output_length: usize,
+}
+
+/// Run benchmarks for all available backends
+pub fn run_benchmarks(config: &BenchmarkConfig) -> Result<Vec<BenchmarkResult>, SmolVLMError> {
     let mut results = Vec::new();
+
+    // Create SmolVLM config
+    let smolvlm_config = SmolVLMConfig::new(config.model_size);
+
+    // Process the image (done once to eliminate this from benchmark)
+    let processor = ImageProcessor::new(&smolvlm_config)?;
+    let image = processor.process_image_from_path(&config.image_path)?;
+
+    // Log benchmark configuration
+    log::info!(
+        "Running SmolVLM benchmarks with image: {}, model size: {:?}, warmup: {}, runs: {}",
+        config.image_path,
+        config.model_size,
+        config.warmup_runs,
+        config.benchmark_runs
+    );
+
+    // Benchmark Candle backend if available
+    #[cfg(feature = "candle")]
+    {
+        let candle_result = benchmark_candle(config, &smolvlm_config, &image)?;
+        results.push(candle_result);
+    }
+
+    // Benchmark ONNX backend if available
+    #[cfg(feature = "onnx")]
+    {
+        let onnx_result = benchmark_onnx(config, &smolvlm_config, &image)?;
+        results.push(onnx_result);
+    }
+
+    // Log if no backends were benchmarked
+    if results.is_empty() {
+        log::warn!("No backends were benchmarked. Enable 'candle' or 'onnx' features.");
+    }
+
+    Ok(results)
+}
+
+/// Benchmark the Candle backend
+#[cfg(feature = "candle")]
+fn benchmark_candle(
+    config: &BenchmarkConfig,
+    smolvlm_config: &SmolVLMConfig,
+    image: &crate::smolvlm::common::ProcessedImage,
+) -> Result<BenchmarkResult, SmolVLMError> {
+    let candle_model_path = format!("{}/candle/{:?}", config.model_path, config.model_size);
     
-    for &backend in backends {
-        for &variant in variants {
-            for &use_cpu in devices {
-                // Skip GPU benchmarks if CUDA/GPU is not available
-                if !use_cpu && !gpu_available() {
-                    continue;
-                }
-                
-                // Run benchmark
-                let result = benchmark_model(
-                    backend,
-                    variant,
-                    use_cpu,
-                    model_path,
-                    image_path,
-                    prompt,
-                );
-                
-                results.push(result);
+    if !Path::new(&candle_model_path).exists() {
+        log::warn!("Candle model path does not exist: {}, skipping benchmark", candle_model_path);
+        return Err(SmolVLMError::ModelLoadError(format!(
+            "Model path does not exist: {}",
+            candle_model_path
+        )));
+    }
+
+    log::info!("Benchmarking Candle backend...");
+    
+    // Initialize backend
+    let mut backend = CandleBackend::new(&candle_model_path, smolvlm_config)?;
+    
+    // Warm up
+    for i in 0..config.warmup_runs {
+        log::debug!("Candle warm-up run {}/{}", i + 1, config.warmup_runs);
+        let _ = backend.generate_caption_for_image(image, &config.prompt);
+    }
+    
+    // Run benchmark
+    let mut durations = Vec::with_capacity(config.benchmark_runs);
+    let mut outputs = Vec::with_capacity(config.benchmark_runs);
+    let mut successes = 0;
+    
+    for i in 0..config.benchmark_runs {
+        log::debug!("Candle benchmark run {}/{}", i + 1, config.benchmark_runs);
+        
+        let start = Instant::now();
+        let result = backend.generate_caption_for_image(image, &config.prompt);
+        let duration = start.elapsed();
+        
+        durations.push(duration);
+        
+        match result {
+            Ok(output) => {
+                successes += 1;
+                outputs.push(output);
+            }
+            Err(e) => {
+                log::error!("Candle benchmark run failed: {}", e);
             }
         }
     }
     
-    results
-}
-
-/// Check if a GPU is available for inference
-fn gpu_available() -> bool {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    return false;
-    
-    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-    {
-        std::process::Command::new("nvidia-smi")
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
-    }
-}
-
-/// Benchmark a single model configuration
-///
-/// # Arguments
-///
-/// * `backend` - The backend to use
-/// * `variant` - The model variant
-/// * `use_cpu` - Whether to use CPU (true) or GPU (false)
-/// * `model_path` - Path to model directory
-/// * `image_path` - Path to test image
-/// * `prompt` - Text prompt for the model
-///
-/// # Returns
-///
-/// Benchmark results
-fn benchmark_model(
-    backend: SmolVLMModel,
-    variant: SmolVLMVariant,
-    use_cpu: bool,
-    model_path: &Path,
-    image_path: &Path,
-    prompt: &str,
-) -> Result<BenchmarkResult, SmolVLMError> {
-    // Load the backend
-    let start = Instant::now();
-    let mut model = load_backend(backend, variant, use_cpu, model_path)?;
-    let load_time = start.elapsed();
-    
-    // Process the image
-    let start = Instant::now();
-    let image_tensor = model.process_image(image_path)?;
-    let process_time = start.elapsed();
-    
-    // Generate text
-    let start = Instant::now();
-    let output = model.generate(&*image_tensor, prompt)?;
-    let generate_time = start.elapsed();
+    // Calculate statistics
+    let avg_duration = calculate_average_duration(&durations);
+    let min_duration = *durations.iter().min().unwrap_or(&Duration::from_secs(0));
+    let max_duration = *durations.iter().max().unwrap_or(&Duration::from_secs(0));
+    let std_duration = calculate_std_duration(&durations, avg_duration);
+    let success_rate = successes as f32 / config.benchmark_runs as f32;
+    let avg_output_length = outputs.iter().map(|s| s.len()).sum::<usize>() / outputs.len().max(1);
     
     Ok(BenchmarkResult {
-        backend,
-        variant,
-        use_cpu,
-        load_time,
-        process_time,
-        generate_time,
-        output,
+        engine: "candle".to_string(),
+        model_size: config.model_size.clone(),
+        avg_duration,
+        min_duration,
+        max_duration,
+        std_duration,
+        success_rate,
+        avg_output_length,
     })
 }
 
-/// Print benchmark results in a tabular format
-///
-/// # Arguments
-///
-/// * `results` - Vector of benchmark results
-pub fn print_benchmark_table(results: &[Result<BenchmarkResult, SmolVLMError>]) {
-    // Print header
-    println!("{:<10} {:<8} {:<5} {:<15} {:<15} {:<15} {:<15}", 
-             "Backend", "Variant", "Device", "Load Time", "Process Time", "Generate Time", "Total Time");
-    println!("{:-<90}", "");
+/// Benchmark the ONNX backend
+#[cfg(feature = "onnx")]
+fn benchmark_onnx(
+    config: &BenchmarkConfig,
+    smolvlm_config: &SmolVLMConfig,
+    image: &crate::smolvlm::common::ProcessedImage,
+) -> Result<BenchmarkResult, SmolVLMError> {
+    let onnx_model_path = format!("{}/onnx/{:?}", config.model_path, config.model_size);
     
-    for result in results {
+    if !Path::new(&onnx_model_path).exists() {
+        log::warn!("ONNX model path does not exist: {}, skipping benchmark", onnx_model_path);
+        return Err(SmolVLMError::ModelLoadError(format!(
+            "Model path does not exist: {}",
+            onnx_model_path
+        )));
+    }
+
+    log::info!("Benchmarking ONNX backend...");
+    
+    // Initialize backend
+    let mut backend = OnnxBackend::new(&onnx_model_path, smolvlm_config)?;
+    
+    // Warm up
+    for i in 0..config.warmup_runs {
+        log::debug!("ONNX warm-up run {}/{}", i + 1, config.warmup_runs);
+        let _ = backend.generate_caption_for_image(image, &config.prompt);
+    }
+    
+    // Run benchmark
+    let mut durations = Vec::with_capacity(config.benchmark_runs);
+    let mut outputs = Vec::with_capacity(config.benchmark_runs);
+    let mut successes = 0;
+    
+    for i in 0..config.benchmark_runs {
+        log::debug!("ONNX benchmark run {}/{}", i + 1, config.benchmark_runs);
+        
+        let start = Instant::now();
+        let result = backend.generate_caption_for_image(image, &config.prompt);
+        let duration = start.elapsed();
+        
+        durations.push(duration);
+        
         match result {
-            Ok(r) => {
-                println!("{:<10?} {:<8?} {:<5} {:<15?} {:<15?} {:<15?} {:<15?}",
-                         r.backend,
-                         r.variant,
-                         if r.use_cpu { "CPU" } else { "GPU" },
-                         r.load_time,
-                         r.process_time,
-                         r.generate_time,
-                         r.load_time + r.process_time + r.generate_time);
+            Ok(output) => {
+                successes += 1;
+                outputs.push(output);
             }
             Err(e) => {
-                println!("Error: {}", e);
-            }
-        }
-    }
-}
-
-/// Get average FPS for image processing
-///
-/// # Arguments
-///
-/// * `result` - Benchmark result
-///
-/// # Returns
-///
-/// Frames per second for image processing
-pub fn get_fps(result: &BenchmarkResult) -> f64 {
-    // Combine load and process time for a more realistic FPS estimate
-    let seconds = result.process_time.as_secs_f64();
-    if seconds > 0.0 {
-        1.0 / seconds
-    } else {
-        0.0
-    }
-}
-
-/// Compare two backends on the same input
-///
-/// # Arguments
-///
-/// * `results` - Vector of benchmark results
-///
-/// # Returns
-///
-/// Comparison as a formatted string
-pub fn compare_backends(
-    results: &[Result<BenchmarkResult, SmolVLMError>],
-) -> String {
-    // Group results by variant and device
-    let mut comparisons = String::new();
-    
-    for variant in [SmolVLMVariant::Tiny, SmolVLMVariant::Small, SmolVLMVariant::Medium] {
-        for use_cpu in [true, false] {
-            // Find results for this variant and device
-            let filtered: Vec<_> = results.iter()
-                .filter_map(|r| {
-                    match r {
-                        Ok(result) if result.variant == variant && result.use_cpu == use_cpu => Some(result),
-                        _ => None,
-                    }
-                })
-                .collect();
-            
-            if filtered.len() > 1 {
-                comparisons.push_str(&format!(
-                    "\n=== {variant:?} on {} ===\n",
-                    if use_cpu { "CPU" } else { "GPU" }
-                ));
-                
-                for result in &filtered {
-                    comparisons.push_str(&format!(
-                        "{:?} - Process: {:?}, Generate: {:?}, Total: {:?}, FPS: {:.2}\n",
-                        result.backend,
-                        result.process_time,
-                        result.generate_time,
-                        result.process_time + result.generate_time,
-                        get_fps(result)
-                    ));
-                }
-                
-                // Compare outputs
-                if filtered.len() >= 2 {
-                    comparisons.push_str("\nOutputs:\n");
-                    for result in &filtered {
-                        comparisons.push_str(&format!("{:?}: {}\n", result.backend, result.output));
-                    }
-                }
+                log::error!("ONNX benchmark run failed: {}", e);
             }
         }
     }
     
-    comparisons
+    // Calculate statistics
+    let avg_duration = calculate_average_duration(&durations);
+    let min_duration = *durations.iter().min().unwrap_or(&Duration::from_secs(0));
+    let max_duration = *durations.iter().max().unwrap_or(&Duration::from_secs(0));
+    let std_duration = calculate_std_duration(&durations, avg_duration);
+    let success_rate = successes as f32 / config.benchmark_runs as f32;
+    let avg_output_length = outputs.iter().map(|s| s.len()).sum::<usize>() / outputs.len().max(1);
+    
+    Ok(BenchmarkResult {
+        engine: "onnx".to_string(),
+        model_size: config.model_size.clone(),
+        avg_duration,
+        min_duration,
+        max_duration,
+        std_duration,
+        success_rate,
+        avg_output_length,
+    })
+}
+
+/// Calculate average duration
+fn calculate_average_duration(durations: &[Duration]) -> Duration {
+    if durations.is_empty() {
+        return Duration::from_secs(0);
+    }
+    
+    let total_nanos: u128 = durations.iter().map(|d| d.as_nanos()).sum();
+    Duration::from_nanos((total_nanos / durations.len() as u128) as u64)
+}
+
+/// Calculate standard deviation of durations
+fn calculate_std_duration(durations: &[Duration], avg_duration: Duration) -> Duration {
+    if durations.len() <= 1 {
+        return Duration::from_secs(0);
+    }
+    
+    let avg_nanos = avg_duration.as_nanos();
+    let variance_sum: u128 = durations
+        .iter()
+        .map(|d| {
+            let diff = if d.as_nanos() > avg_nanos {
+                d.as_nanos() - avg_nanos
+            } else {
+                avg_nanos - d.as_nanos()
+            };
+            diff * diff
+        })
+        .sum();
+    
+    let variance = variance_sum / (durations.len() - 1) as u128;
+    let std_dev = (variance as f64).sqrt();
+    
+    Duration::from_nanos(std_dev as u64)
 }

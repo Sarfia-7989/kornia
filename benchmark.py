@@ -15,6 +15,9 @@ import platform
 from datetime import datetime
 from PIL import Image
 
+# Check if running in CI environment
+IN_CI = os.environ.get("CI") == "true"
+
 # Available model sizes
 MODEL_SIZES = ["small", "medium", "large"]
 
@@ -31,6 +34,13 @@ TEST_PROMPTS = {
 # Available backends
 BACKENDS = ["python", "candle", "onnx"]
 
+# CI-specific configurations
+CI_CONFIG = {
+    "timeout": 60,  # seconds
+    "build_retries": 2,
+    "reduced_iterations": True,
+}
+
 def get_system_info():
     """Get information about the system for benchmark results"""
     system_info = {
@@ -46,26 +56,25 @@ def get_system_info():
     # Try to get CPU info on Linux
     if platform.system() == "Linux":
         try:
-            cpu_info = {}
+            cpu_model = "Unknown"
             with open("/proc/cpuinfo", "r") as f:
                 for line in f:
                     if "model name" in line:
-                        cpu_info["model"] = line.split(":")[1].strip()
+                        cpu_model = line.split(":")[1].strip()
                         break
-            system_info["cpu_info"] = cpu_info
+            system_info["cpu_model"] = cpu_model
         except:
-            pass
+            system_info["cpu_model"] = "Could not determine"
             
     # Try to get memory info
     try:
         import psutil
         mem = psutil.virtual_memory()
-        system_info["memory"] = {
-            "total": mem.total,
-            "available": mem.available,
-        }
+        system_info["memory_total"] = str(mem.total)
+        system_info["memory_available"] = str(mem.available)
     except:
-        pass
+        system_info["memory_total"] = "Unknown"
+        system_info["memory_available"] = "Unknown"
         
     return system_info
 
@@ -216,16 +225,67 @@ def run_rust_onnx_benchmark(image_path, prompt, model_size="small"):
         "success": result.returncode == 0,
     }
 
+def in_ci_environment():
+    """Check if running in a CI environment"""
+    return IN_CI
+
 def run_benchmark(backend, image_path, prompt, model_size="small", use_hf=False):
-    """Run benchmark with the specified backend"""
-    if backend == "python":
-        return run_python_benchmark(image_path, prompt, model_size, use_hf)
-    elif backend == "candle":
-        return run_rust_candle_benchmark(image_path, prompt, model_size)
-    elif backend == "onnx":
-        return run_rust_onnx_benchmark(image_path, prompt, model_size)
+    """Run benchmark with the specified backend, adapted for CI environments"""
+    # In CI, use reduced settings for some backends
+    if in_ci_environment() and backend in ["candle", "onnx"]:
+        print("CI environment detected, using reduced settings")
+        # Timeout settings depend on environment
+        timeout = CI_CONFIG["timeout"]  # seconds for CI
+        
+        # For CI, we'll implement a simple timeout mechanism
+        import threading
+        import signal
+        
+        result = {"elapsed_time": 0, "description": "", "exit_code": -1, "success": False}
+        
+        def run_with_timeout():
+            nonlocal result
+            try:
+                if backend == "python":
+                    result = run_python_benchmark(image_path, prompt, model_size, use_hf)
+                elif backend == "candle":
+                    result = run_rust_candle_benchmark(image_path, prompt, model_size)
+                elif backend == "onnx":
+                    result = run_rust_onnx_benchmark(image_path, prompt, model_size)
+            except Exception as e:
+                result = {
+                    "elapsed_time": 0,
+                    "description": f"Error: {str(e)}",
+                    "exit_code": 1,
+                    "success": False,
+                }
+        
+        thread = threading.Thread(target=run_with_timeout)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout)
+        
+        if thread.is_alive():
+            print(f"Timeout after {timeout} seconds")
+            # Try to get partial results
+            return {
+                "elapsed_time": timeout,
+                "description": "Timeout - operation took too long in CI environment",
+                "exit_code": -1,
+                "success": False,
+            }
+        
+        return result
     else:
-        raise ValueError(f"Unknown backend: {backend}")
+        # Regular execution for non-CI or Python backend
+        if backend == "python":
+            return run_python_benchmark(image_path, prompt, model_size, use_hf)
+        elif backend == "candle":
+            return run_rust_candle_benchmark(image_path, prompt, model_size)
+        elif backend == "onnx":
+            return run_rust_onnx_benchmark(image_path, prompt, model_size)
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
 
 def main():
     parser = argparse.ArgumentParser(description="SmolVLM Benchmarking Tool")

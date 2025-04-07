@@ -4,11 +4,11 @@ use crate::{
     Tensor,
 };
 
-impl<T, const N: usize, A: TensorAllocator + 'static> bincode::enc::Encode for Tensor<T, N, A>
+impl<T, const N: usize, A: TensorAllocator + 'static> bincode::Encode for Tensor<T, N, A>
 where
-    T: bincode::enc::Encode,
+    T: bincode::Encode,
 {
-    fn encode<E: bincode::enc::Encoder>(
+    fn encode<E: bincode::Encoder>(
         &self,
         encoder: &mut E,
     ) -> Result<(), bincode::error::EncodeError> {
@@ -19,11 +19,11 @@ where
     }
 }
 
-impl<T, const N: usize, C> bincode::de::Decode<C> for Tensor<T, N, CpuAllocator>
+impl<T, const N: usize> bincode::Decode for Tensor<T, N, CpuAllocator>
 where
-    T: bincode::de::Decode<C>,
+    T: bincode::Decode,
 {
-    fn decode<D: bincode::de::Decoder<Context = C>>(
+    fn decode<D: bincode::Decoder>(
         decoder: &mut D,
     ) -> Result<Self, bincode::error::DecodeError> {
         let shape = bincode::Decode::decode(decoder)?;

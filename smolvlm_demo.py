@@ -13,14 +13,28 @@ import time
 import json
 import base64
 import io
+import platform
 from datetime import datetime
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    # NumPy is optional for basic functionality
+    np = None
 from PIL import Image, ImageFilter, ImageStat, ImageEnhance
 import requests
 
 # Check if we have a Hugging Face token
 HF_TOKEN = os.environ.get("HF_TOKEN")
 USE_HUGGING_FACE = HF_TOKEN is not None and len(HF_TOKEN) > 0
+
+# Log token availability without revealing the token
+if USE_HUGGING_FACE and HF_TOKEN is not None:
+    print(f"Hugging Face token is available (length: {len(HF_TOKEN)})")
+else:
+    print("No Hugging Face token found in environment")
+
+# Check if running in CI environment
+IN_CI = os.environ.get("CI") == "true"
 
 class SmolVLMAnalyzer:
     """SmolVLM Image Analysis Engine"""
@@ -350,20 +364,44 @@ class SmolVLMAnalyzer:
             # Fallback if variance isn't available
             return 1000  # Moderate default
 
+def get_platform_config():
+    """Get platform-specific configuration and make adjustments"""
+    system = platform.system().lower()
+    config = {
+        "max_image_size": 1024,  # Default max image dimension
+        "use_simulation": False,  # Whether to force simulation mode
+    }
+    
+    # CI environment detection
+    if IN_CI:
+        # In CI environments, use smaller images and avoid some operations
+        config["max_image_size"] = 512
+        if system == "linux":
+            # Check for specific Ubuntu versions that might have issues
+            if "ubuntu" in platform.version().lower():
+                # Be more conservative with memory usage on Ubuntu CI
+                config["max_image_size"] = 384
+    
+    return config
+
 def process_image(image_path):
-    """Load and process the image"""
+    """Load and process the image with platform-specific settings"""
     try:
         print(f"Loading image from: {image_path}")
         image = Image.open(image_path)
         print(f"Image loaded successfully: {image.format}, {image.size}x{image.mode}")
         
-        # Resize image if it's very large
-        max_dim = 1024
+        # Get platform-specific configuration
+        platform_config = get_platform_config()
+        max_dim = platform_config["max_image_size"]
+        
+        # Resize image if needed
         if max(image.size) > max_dim:
             ratio = max_dim / max(image.size)
             new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
             print(f"Resizing image to {new_size}")
-            image = image.resize(new_size, Image.LANCZOS)
+            # Use BICUBIC instead of LANCZOS as it's more widely supported across PIL versions
+            image = image.resize(new_size, Image.BICUBIC)
         
         return image
     except Exception as e:

@@ -1,127 +1,165 @@
 #!/bin/bash
-# Script to download SmolVLM models for both ONNX and Candle backends
+# SmolVLM Model Downloader
+# Downloads model weights for both Candle and ONNX backends
 
 set -e
 
-# Create models directory structure if it doesn't exist
-mkdir -p models/smolvlm/{small,medium,large}/{onnx,candle}
+# Configuration
+MODEL_BASE_DIR="models"
+HF_REPO_SMALL="Kornia/SmolVLM-Small"
+HF_REPO_MEDIUM="Kornia/SmolVLM-Medium"
+HF_REPO_LARGE="Kornia/SmolVLM-Large"
 
-echo "==== SmolVLM Model Downloader ===="
-echo "This script will download model weights for SmolVLM."
-echo
+# Parse command line arguments
+DOWNLOAD_SMALL=false
+DOWNLOAD_MEDIUM=false
+DOWNLOAD_LARGE=false
+DOWNLOAD_CANDLE=false
+DOWNLOAD_ONNX=false
 
-# Model URLs - these would be updated with actual URLs when available
-MODELS=(
-  # SmolVLM Small
-  "small:onnx:processor:https://huggingface.co/kornia/SmolVLM-small/resolve/main/processor.onnx"
-  "small:onnx:tokenizer:https://huggingface.co/kornia/SmolVLM-small/resolve/main/tokenizer.onnx"
-  "small:onnx:vision:https://huggingface.co/kornia/SmolVLM-small/resolve/main/vision_encoder.onnx"
-  "small:onnx:llm:https://huggingface.co/kornia/SmolVLM-small/resolve/main/llm.onnx"
-  "small:candle:processor:https://huggingface.co/kornia/SmolVLM-small/resolve/main/processor.safetensors"
-  "small:candle:tokenizer:https://huggingface.co/kornia/SmolVLM-small/resolve/main/tokenizer.safetensors"
-  "small:candle:vision:https://huggingface.co/kornia/SmolVLM-small/resolve/main/vision_encoder.safetensors"
-  "small:candle:llm:https://huggingface.co/kornia/SmolVLM-small/resolve/main/llm.safetensors"
-  
-  # SmolVLM Medium
-  "medium:onnx:processor:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/processor.onnx"
-  "medium:onnx:tokenizer:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/tokenizer.onnx"
-  "medium:onnx:vision:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/vision_encoder.onnx"
-  "medium:onnx:llm:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/llm.onnx"
-  "medium:candle:processor:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/processor.safetensors"
-  "medium:candle:tokenizer:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/tokenizer.safetensors"
-  "medium:candle:vision:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/vision_encoder.safetensors"
-  "medium:candle:llm:https://huggingface.co/kornia/SmolVLM-medium/resolve/main/llm.safetensors"
-  
-  # SmolVLM Large
-  "large:onnx:processor:https://huggingface.co/kornia/SmolVLM-large/resolve/main/processor.onnx"
-  "large:onnx:tokenizer:https://huggingface.co/kornia/SmolVLM-large/resolve/main/tokenizer.onnx"
-  "large:onnx:vision:https://huggingface.co/kornia/SmolVLM-large/resolve/main/vision_encoder.onnx"
-  "large:onnx:llm:https://huggingface.co/kornia/SmolVLM-large/resolve/main/llm.onnx"
-  "large:candle:processor:https://huggingface.co/kornia/SmolVLM-large/resolve/main/processor.safetensors"
-  "large:candle:tokenizer:https://huggingface.co/kornia/SmolVLM-large/resolve/main/tokenizer.safetensors"
-  "large:candle:vision:https://huggingface.co/kornia/SmolVLM-large/resolve/main/vision_encoder.safetensors"
-  "large:candle:llm:https://huggingface.co/kornia/SmolVLM-large/resolve/main/llm.safetensors"
-)
-
-# Check for size argument
-if [ "$#" -gt 0 ]; then
-  SIZE="$1"
-  echo "Will download only '$SIZE' model size."
-else
-  SIZE="all"
-  echo "Will download models for all sizes: small, medium, large."
+# If no specific arguments, download all
+if [ $# -eq 0 ]; then
+  DOWNLOAD_SMALL=true
+  DOWNLOAD_MEDIUM=true
+  DOWNLOAD_LARGE=true
+  DOWNLOAD_CANDLE=true
+  DOWNLOAD_ONNX=true
 fi
 
-# Check if HF token is available for authenticated downloads
-if [ -n "$HF_TOKEN" ]; then
-  AUTH_HEADER="--header 'Authorization: Bearer $HF_TOKEN'"
-  echo "Using Hugging Face authentication token."
-else
-  AUTH_HEADER=""
-  echo "No Hugging Face authentication token found. Trying unauthenticated download."
-fi
-
-# Count total number of models to download
-if [ "$SIZE" = "all" ]; then
-  TOTAL=${#MODELS[@]}
-else
-  TOTAL=0
-  for model in "${MODELS[@]}"; do
-    model_size=$(echo $model | cut -d':' -f1)
-    if [ "$model_size" = "$SIZE" ]; then
-      TOTAL=$((TOTAL + 1))
-    fi
-  done
-fi
-
-echo "Will download $TOTAL model files."
-echo
-
-# Download the models
-COUNT=0
-for model in "${MODELS[@]}"; do
-  # Parse model info
-  model_size=$(echo $model | cut -d':' -f1)
-  backend=$(echo $model | cut -d':' -f2)
-  component=$(echo $model | cut -d':' -f3)
-  url=$(echo $model | cut -d':' -f4-)
-  
-  # Skip if not the requested size
-  if [ "$SIZE" != "all" ] && [ "$model_size" != "$SIZE" ]; then
-    continue
-  fi
-  
-  COUNT=$((COUNT + 1))
-  
-  # Create destination directory and filename
-  dest_dir="models/smolvlm/$model_size/$backend"
-  filename="$component.$(echo $url | grep -o '[^.]*$')"
-  dest_file="$dest_dir/$filename"
-  
-  echo "[$COUNT/$TOTAL] Downloading $model_size model ($backend backend): $component"
-  echo "  URL: $url"
-  echo "  Destination: $dest_file"
-  
-  # Create directory if it doesn't exist
-  mkdir -p "$dest_dir"
-  
-  # Download the file
-  if [ -n "$AUTH_HEADER" ]; then
-    curl -L -o "$dest_file" $AUTH_HEADER "$url"
-  else
-    curl -L -o "$dest_file" "$url"
-  fi
-  
-  echo "  Download complete!"
-  echo
+# Parse arguments
+for arg in "$@"; do
+  case $arg in
+    --small)
+      DOWNLOAD_SMALL=true
+      ;;
+    --medium)
+      DOWNLOAD_MEDIUM=true
+      ;;
+    --large)
+      DOWNLOAD_LARGE=true
+      ;;
+    --candle)
+      DOWNLOAD_CANDLE=true
+      ;;
+    --onnx)
+      DOWNLOAD_ONNX=true
+      ;;
+    --help)
+      echo "SmolVLM Model Downloader"
+      echo ""
+      echo "Usage: ./download_models.sh [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --small     Download small model weights"
+      echo "  --medium    Download medium model weights"
+      echo "  --large     Download large model weights"
+      echo "  --candle    Download Candle backend weights"
+      echo "  --onnx      Download ONNX backend weights"
+      echo "  --help      Show this help message"
+      echo ""
+      echo "If no options are specified, all models and backends will be downloaded."
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg"
+      echo "Use --help to see available options."
+      exit 1
+      ;;
+  esac
 done
 
-echo "==== Download Complete ===="
-echo "Downloaded $COUNT model files."
-echo
-echo "Models are stored in the 'models/smolvlm/' directory organized by size and backend:"
-echo "- models/smolvlm/small/{onnx,candle}/"
-echo "- models/smolvlm/medium/{onnx,candle}/"
-echo "- models/smolvlm/large/{onnx,candle}/"
-echo
-echo "You can now use these models with the SmolVLM demo applications."
+# Create model directories
+mkdir -p "${MODEL_BASE_DIR}/candle"
+mkdir -p "${MODEL_BASE_DIR}/onnx"
+
+# Check if huggingface-cli is available
+if ! command -v huggingface-cli &> /dev/null; then
+    echo "huggingface-cli is not installed. Please install it using:"
+    echo "pip install huggingface_hub"
+    echo ""
+    echo "Alternatively, you can manually download the models from:"
+    echo "https://huggingface.co/${HF_REPO_SMALL}"
+    echo "https://huggingface.co/${HF_REPO_MEDIUM}"
+    echo "https://huggingface.co/${HF_REPO_LARGE}"
+    exit 1
+fi
+
+# Check for Hugging Face token
+if [ -z "${HF_TOKEN}" ]; then
+    echo "Warning: HF_TOKEN environment variable not set."
+    echo "You may encounter rate limits or be unable to access private models."
+    echo "Set the HF_TOKEN environment variable with your Hugging Face API token."
+    echo ""
+    HUGGINGFACE_AUTH=""
+else
+    HUGGINGFACE_AUTH="--token ${HF_TOKEN}"
+    echo "Using Hugging Face token for authentication."
+fi
+
+# Function to download a specific model for a specific backend
+download_model() {
+    local size=$1
+    local backend=$2
+    local repo_name=$3
+    local target_dir="${MODEL_BASE_DIR}/${backend}/${size}"
+    
+    echo "===== Downloading ${size} model for ${backend} backend ====="
+    
+    # Create target directory
+    mkdir -p "${target_dir}"
+    
+    # Determine files to download based on backend
+    if [ "${backend}" = "candle" ]; then
+        # For Candle, download SafeTensors or GGML files
+        echo "Downloading Candle model files from ${repo_name}..."
+        huggingface-cli download ${HUGGINGFACE_AUTH} ${repo_name} \
+            --local-dir "${target_dir}" \
+            --include "*.safetensors" "*.ggml" "tokenizer.json" "config.json" \
+            --quiet
+    elif [ "${backend}" = "onnx" ]; then
+        # For ONNX, download ONNX files
+        echo "Downloading ONNX model files from ${repo_name}..."
+        huggingface-cli download ${HUGGINGFACE_AUTH} ${repo_name} \
+            --local-dir "${target_dir}" \
+            --include "*.onnx" "tokenizer.json" "config.json" \
+            --quiet
+    fi
+    
+    echo "Download complete: ${target_dir}"
+    echo ""
+}
+
+# Download models based on command line arguments
+if [ "${DOWNLOAD_SMALL}" = true ]; then
+    if [ "${DOWNLOAD_CANDLE}" = true ]; then
+        download_model "Small" "candle" "${HF_REPO_SMALL}"
+    fi
+    if [ "${DOWNLOAD_ONNX}" = true ]; then
+        download_model "Small" "onnx" "${HF_REPO_SMALL}"
+    fi
+fi
+
+if [ "${DOWNLOAD_MEDIUM}" = true ]; then
+    if [ "${DOWNLOAD_CANDLE}" = true ]; then
+        download_model "Medium" "candle" "${HF_REPO_MEDIUM}"
+    fi
+    if [ "${DOWNLOAD_ONNX}" = true ]; then
+        download_model "Medium" "onnx" "${HF_REPO_MEDIUM}"
+    fi
+fi
+
+if [ "${DOWNLOAD_LARGE}" = true ]; then
+    if [ "${DOWNLOAD_CANDLE}" = true ]; then
+        download_model "Large" "candle" "${HF_REPO_LARGE}"
+    fi
+    if [ "${DOWNLOAD_ONNX}" = true ]; then
+        download_model "Large" "onnx" "${HF_REPO_LARGE}"
+    fi
+fi
+
+echo "===== All requested models have been downloaded ====="
+echo "Model directory: ${MODEL_BASE_DIR}"
+echo ""
+echo "To use these models, provide the path to the model directory:"
+echo "For Candle: ${MODEL_BASE_DIR}/candle/Small"
+echo "For ONNX: ${MODEL_BASE_DIR}/onnx/Small"

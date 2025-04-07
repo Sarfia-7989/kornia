@@ -1,159 +1,198 @@
-# SmolVLM in Kornia-RS
+# SmolVLM for Kornia-rs
 
-This is the official implementation of SmolVLM (Small Vision-Language Models) in the Kornia Rust ecosystem. SmolVLM provides lightweight vision-language capabilities with multiple backend options.
+This is a Rust implementation of SmolVLM (Small Vision Language Models) for the Kornia library. SmolVLM provides lightweight and efficient vision-language capabilities, particularly suitable for embedded systems and resource-constrained environments.
 
 ## Overview
 
-SmolVLM is designed to provide efficient vision-language capabilities that can run on embedded devices and edge hardware. The model architecture integrates vision encoder, language model, and multimodal understanding in a compact format.
+SmolVLM integrates vision-language capabilities into Kornia, allowing for tasks such as:
+- Image captioning
+- Visual question answering
+- Scene understanding
+- Object detection description
 
-Key features:
-- Multiple model sizes: Small, Medium, and Large variants
-- Multiple backend options: ONNX and Candle
-- Complete Rust implementation within the Kornia ecosystem
-- Python bindings and demo tools for easy use
-- Lightweight design for deployment on edge devices like NVIDIA Jetson
+The implementation supports multiple backends and model sizes:
+
+**Backends:**
+- Candle: Native Rust machine learning framework for efficient on-device inference
+- ONNX Runtime: Cross-platform inferencing with ORT-Pyke integration
+
+**Model Sizes:**
+- Small (~300MB): For resource-constrained environments
+- Medium (~500MB): Balanced between size and capability
+- Large (~1GB): For best performance when resources allow
+
+## Features
+
+- 🚀 **Multiple backend support**: Choose between Candle (pure Rust) or ONNX Runtime
+- 📏 **Size options**: Three model sizes to fit different resource constraints
+- 📊 **Comprehensive benchmarking**: Tools to evaluate performance across backends and configurations
+- 🔧 **Easy integration**: Simple API for kornia-rs applications
+- 🧪 **Test utilities**: Example applications and testing framework
+- 🔄 **Platform compatibility**: Works on desktop and NVIDIA Jetson platforms
 
 ## Installation
 
 ### Prerequisites
 
-- Rust 1.84.0 or newer
-- Python 3.8 or newer (for Python demos)
-- Cargo and basic Rust toolchain
+- Rust 1.76 or newer
+- For ONNX backend: ONNX Runtime libraries
+- For Candle backend: No additional dependencies
 
-### Building from Source
+### Building
 
-1. Clone the Kornia-RS repository:
-   ```bash
-   git clone https://github.com/kornia/kornia-rs.git
-   cd kornia-rs
-   ```
+To build with both backends:
 
-2. Download the model weights:
-   ```bash
-   ./download_models.sh small  # For small model only
-   # Or download all model sizes:
-   # ./download_models.sh
-   ```
+```bash
+cargo build --features="kornia-models/candle kornia-models/onnx"
+```
 
-3. Build the Rust library and examples:
-   ```bash
-   # Build with Candle backend
-   cargo build --release --example smolvlm_demo --features candle
-   
-   # Or build with ONNX backend
-   cargo build --release --example smolvlm_demo --features onnx
-   ```
+For only Candle backend:
+
+```bash
+cargo build --features="kornia-models/candle"
+```
+
+For only ONNX backend:
+
+```bash
+cargo build --features="kornia-models/onnx"
+```
+
+### Downloading Models
+
+Use the provided script to download model weights:
+
+```bash
+# Download all models for all backends
+./download_models.sh
+
+# Download only small model for Candle backend
+./download_models.sh --small --candle
+
+# Download only medium model for ONNX backend
+./download_models.sh --medium --onnx
+```
 
 ## Usage
 
 ### Rust API
 
-The SmolVLM Rust API is available through the `kornia-models` crate:
-
 ```rust
-use kornia_models::smolvlm::{SmolVLM, SmolVLMConfig, Backend};
+use kornia_models::smolvlm::common::{ModelSize, SmolVLMConfig};
+use kornia_models::smolvlm::processor::ImageProcessor;
+use kornia_models::smolvlm::candle::CandleBackend;
 
-// Create a SmolVLM instance with Candle backend
-let config = SmolVLMConfig {
-    model_size: "small",
-    backend: Backend::Candle,
-    model_path: "models/smolvlm/small/candle",
-};
-let model = SmolVLM::new(config).unwrap();
-
-// Process an image
-let image = image::open("test_image.jpg").unwrap();
-let prompt = "What objects are in this image?";
-let result = model.process_image(&image, prompt).unwrap();
-println!("Result: {}", result);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Configure SmolVLM
+    let config = SmolVLMConfig::new(ModelSize::Small);
+    
+    // Initialize image processor
+    let processor = ImageProcessor::new(&config)?;
+    
+    // Process an image
+    let image = processor.process_image_from_path("path/to/image.jpg")?;
+    
+    // Initialize backend with model path
+    let mut backend = CandleBackend::new("models/candle/Small", &config)?;
+    
+    // Generate a caption
+    let caption = backend.generate_caption_for_image(&image, "What objects are in this image?")?;
+    
+    println!("Caption: {}", caption);
+    
+    Ok(())
+}
 ```
 
-### Command-line Demo
+### Example Applications
 
-Run the SmolVLM demo with the compiled example:
+The repository includes several example applications:
+
+#### Basic SmolVLM Demo
 
 ```bash
-# Using Candle backend
-./target/release/examples/smolvlm_demo --image test_image.jpg --prompt "What objects are in this image?" --backend candle
-
-# Using ONNX backend
-./target/release/examples/smolvlm_demo --image test_image.jpg --prompt "What objects are in this image?" --backend onnx
+cargo run --example smolvlm_demo --features="kornia-models/candle" -- --image test_image.jpg --prompt "What objects are in this image?"
 ```
 
-### Python Demo
-
-For convenience, a Python demo is also provided:
+#### Backend Comparison
 
 ```bash
-# Using simulation (no model needed)
-python3 smolvlm_demo.py -i test_image.jpg -p "What objects are in this image?"
-
-# Using Hugging Face API (requires HF token)
-export HF_TOKEN=your_hugging_face_token
-python3 smolvlm_demo.py -i test_image.jpg -p "What objects are in this image?" --use-hf
+cargo run --example smolvlm_compare --features="kornia-models/candle kornia-models/onnx" -- --image test_image.jpg --prompt "What objects are in this image?" --backends candle onnx
 ```
 
-### Benchmarking
-
-Benchmark SmolVLM performance across different backends:
+#### Benchmarking Tool
 
 ```bash
-python3 benchmark.py -i test_image.jpg -b python candle -s small medium -t description objects -r 3
+cargo run --example smolvlm_compare --features="kornia-models/candle kornia-models/onnx" -- --image test_image.jpg --prompt "What objects are in this image?" --backends candle onnx --benchmark --runs 5
 ```
 
-## Model Variants
+### Python Integration
 
-SmolVLM comes in three sizes with different parameter counts:
+The repository also includes Python scripts for demonstration and benchmarking:
 
-| Model Size | Parameters | Vision Encoder | Language Model | Recommended Use Case |
-|------------|------------|----------------|----------------|----------------------|
-| Small      | ~100M      | MobileViT-XS   | GPT-2 Small    | Mobile devices, edge computing |
-| Medium     | ~350M      | MobileViT-S    | GPT-2 Medium   | Embedded systems, mid-range devices |
-| Large      | ~750M      | MobileViT-M    | GPT-2 Large    | Desktop applications, high-end embedded |
-
-## Web API
-
-A simple web API example is provided in `examples/web_api.rs`:
+#### Demo
 
 ```bash
-cargo run --release --example web_api
+cd kornia-rs
+python smolvlm_demo.py -i test_image.jpg -p "What objects are in this image?"
 ```
 
-The API will serve at `http://localhost:3000` with the following endpoints:
+With Hugging Face API integration:
 
-- `POST /analyze` - Analyze an image with SmolVLM
-  - Parameters: `image` (multipart file), `prompt` (text)
-  - Returns: JSON with analysis result
+```bash
+export HF_TOKEN="your_hugging_face_token"
+cd kornia-rs
+python smolvlm_demo.py -i test_image.jpg -p "What objects are in this image?" --use-hf
+```
 
-## Technical Details
+#### Benchmarking
 
-### Architecture
+```bash
+cd kornia-rs
+python benchmark.py -i test_image.jpg -b python candle onnx -s small medium -t objects scene -r 3
+```
 
-SmolVLM consists of these components:
+## Benchmarking and Evaluation
 
-1. **Processor**: Handles image preprocessing (resize, normalize)
-2. **Vision Encoder**: Extracts visual features from images
-3. **Tokenizer**: Converts text to/from token IDs
-4. **LLM**: Processes combined visual and text features to generate responses
+### Performance Comparison
 
-### Backends
+The implementation includes tools to benchmark and compare the performance of different backends and model sizes. Here are some key metrics to look for:
 
-- **Candle**: Pure Rust machine learning framework
-- **ONNX**: Support via ORT-Pyke (ONNX Runtime for Rust)
+1. **Inference Time**: How long it takes to process an image and generate a response
+2. **Memory Usage**: Peak memory consumption during inference
+3. **Model Loading Time**: Time required to load the model into memory
+4. **Accuracy**: Quality of generated captions or answers
 
-### Performance
+### NVIDIA Jetson Compatibility
 
-Performance varies by model size and backend:
+The implementation is designed to work well on NVIDIA Jetson platforms. When running on Jetson:
 
-| Model Size | Candle Backend | ONNX Backend | Python Demo |
-|------------|---------------|--------------|-------------|
-| Small      | ~150ms        | ~100ms       | ~300ms      |
-| Medium     | ~350ms        | ~250ms       | ~500ms      |
-| Large      | ~750ms        | ~600ms       | ~1000ms     |
+1. Ensure CUDA libraries are properly installed
+2. For optimal performance with ONNX, TensorRT acceleration is recommended
+3. For Candle backend, ensure CUDA support is enabled during build
 
-*Measured on modern desktop CPU. GPU acceleration significantly improves performance.*
+## Architecture
+
+The SmolVLM implementation consists of several key components:
+
+1. **Common Interfaces**: Provides model configuration, error handling, and shared types
+2. **Image Processor**: Handles image loading, preprocessing, and normalization
+3. **Tokenizer**: Manages text tokenization for prompts and outputs
+4. **Backend Implementations**:
+   - Candle: Pure Rust implementation
+   - ONNX: Integration with ONNX Runtime
+5. **Benchmarking Tools**: Utilities for performance testing and comparison
+
+## Contributing
+
+Contributions to improve SmolVLM in kornia-rs are welcome! Areas for improvement include:
+
+- Performance optimizations
+- Additional backend implementations
+- Enhanced model capabilities
+- Better integration with other Kornia components
+- Expanded testing on different platforms
 
 ## License
 
-SmolVLM is licensed under Apache 2.0. See LICENSE file for details.
+This project is licensed under Apache License 2.0 - see the LICENSE file for details.
