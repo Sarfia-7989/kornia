@@ -1,43 +1,25 @@
 [package]
 name = "kornia-io"
-authors.workspace = true
-description = "Image and Video IO library in Rust for computer vision"
-edition.workspace = true
-homepage.workspace = true
+description = "IO library in Rust"
+version.workspace = true
 license.workspace = true
-publish = true
+edition.workspace = true
+authors.workspace = true
+readme.workspace = true
+categories.workspace = true
+homepage.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-version.workspace = true
-
-[package.metadata.docs.rs]
-all-features = true
-rustc-args = ["--cfg", "docsrs"]
-rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-image = "0.25"
-circular-buffer = "1.1.0"
+kornia-tensor = { workspace = true }
 kornia-image = { workspace = true }
-png = "0.17"
-jpeg-encoder = "0.6"
-jpeg-decoder = "0.3"
-log = { workspace = true }
-thiserror = { workspace = true }
-
-# optional dependencies
-gstreamer = { version = "0.23.5", optional = true }
-gstreamer-app = { version = "0.23.5", optional = true }
-turbojpeg = { version = "1.2", optional = true }
-
-[dev-dependencies]
-criterion = { workspace = true }
-tempfile = { workspace = true }
+log.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+once_cell = "1.19"
 
 [features]
-gstreamer = ["dep:gstreamer", "dep:gstreamer-app"]
-turbojpeg = ["dep:turbojpeg"]
-
-[[bench]]
-name = "bench_io"
-harness = false
+default = []
+video = []
